@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;//needed for Lists
 using System.Linq;
+using Unity.Networking.Transport;
 
 
 public enum SpecialMove
@@ -50,6 +51,8 @@ public class Chessboard : MonoBehaviour
     private const int tileCount_y = 8;
     private List<Vector2Int[]> moveList = new List<Vector2Int[]>();//historical move list
     private SpecialMove specialMove;
+    private int playerCount = -1;
+    private int currentTeam = -1;
 
 
     private GameObject[,] tiles = new GameObject[tileCount_x, tileCount_y];
@@ -59,6 +62,7 @@ public class Chessboard : MonoBehaviour
     private Camera currentCamera;*/
     private Vector3 bounds;//not used
     private bool isWhiteTurn;
+    private bool waitingOnPromote;
     private Camera currentCamera;
 
     private Vector2Int currentHover;
@@ -69,6 +73,9 @@ public class Chessboard : MonoBehaviour
         SpawnAllPieces();
         PositionAllPieces();
         isWhiteTurn = true;
+        waitingOnPromote = false;
+
+        RegisterEvents();
         //UnityEngine.Debug.Log(hoverMaterial);//the serialized material is null on awake...
     }
 
@@ -118,7 +125,7 @@ public class Chessboard : MonoBehaviour
             {
                 if (chessPieces[hitPosition.x, hitPosition.y] != null)
                 {
-                    if (chessPieces[hitPosition.x, hitPosition.y].team == 0 && isWhiteTurn || chessPieces[hitPosition.x, hitPosition.y].team == 1 && !isWhiteTurn)//turn
+                    if (chessPieces[hitPosition.x, hitPosition.y].team == 0 && isWhiteTurn && !waitingOnPromote && currentTeam == 0 || chessPieces[hitPosition.x, hitPosition.y].team == 1 && !isWhiteTurn && !waitingOnPromote && currentTeam == 1)//turn
                     {
                         currentlyDragging = chessPieces[hitPosition.x, hitPosition.y];
                         //Debug.Log("dragging piece");
@@ -555,12 +562,69 @@ public class Chessboard : MonoBehaviour
             {
                 if (pawn.currentY == 0 || pawn.currentY == 7)
                 {
-                    ChessPiece newQueen = SpawnSinglePiece(ChessPieceType.Queen, pawn.team);
-                    Destroy(chessPieces[lastMove[1].x, lastMove[1].y].gameObject);
-                    chessPieces[lastMove[1].x, lastMove[1].y] = newQueen;
-                    PositionSinglePiece(lastMove[1].x, lastMove[1].y, true);
+                    waitingOnPromote = true;
+                    transform.GetChild(1).gameObject.SetActive(true);
                 }
             }
         }
+    }
+
+    public void Promotion(int selection)//public so button can use it
+    {
+        var lastMove = moveList[moveList.Count - 1];
+        ChessPiece pawn = chessPieces[lastMove[1].x, lastMove[1].y];
+        ChessPiece newPiece = SpawnSinglePiece((ChessPieceType)selection, pawn.team);
+        Destroy(chessPieces[lastMove[1].x, lastMove[1].y].gameObject);
+        chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
+        PositionSinglePiece(lastMove[1].x, lastMove[1].y, true);
+        transform.GetChild(1).gameObject.SetActive(false);
+        waitingOnPromote = false;
+    }
+
+    private void RegisterEvents()
+    {
+        NetUtility.S_WELCOME += OnWelcomeServer;
+
+        NetUtility.C_WELCOME += OnWelcomeClient;
+
+        NetUtility.C_START_GAME += OnStartGameClient;
+    }
+
+
+
+    private void UnRegisterEvents()
+    {
+
+    }
+    private void OnWelcomeServer(NetMessages messages, NetworkConnection connection)
+    {
+        //client has connected, assign team and return message
+        NetWelcome nw = messages as NetWelcome;
+
+        //assign team
+        nw.AssignedTeam = ++playerCount;
+
+        //return to client
+        Server.Instance.SendToClient(connection, nw);
+
+        if (playerCount == 1)
+        {
+            Server.Instance.Broadcast(new NetStartGame());
+        }
+    }
+    private void OnWelcomeClient(NetMessages messages)
+    {
+        //recieve connection message
+        NetWelcome nw = messages as NetWelcome;
+
+        //assign team
+        currentTeam = nw.AssignedTeam;
+
+        //Debug.Log yada yada
+    }
+    private void OnStartGameClient(NetMessages messages)
+    {
+        //change camera
+        GameUI.Instance.ChangeCamera((currentTeam == 0) ? CameraAngle.white : CameraAngle.black);
     }
 }
